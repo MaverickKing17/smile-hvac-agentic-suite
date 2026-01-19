@@ -5,6 +5,7 @@ import AiVoiceAgent from './components/AiVoiceAgent';
 import UxAuditSection from './components/UxAuditSection';
 import RoiSection from './components/RoiSection';
 import KnowledgeBase from './components/KnowledgeBase';
+import Footer from './components/Footer';
 
 const App: React.FC = () => {
   const [mounted, setMounted] = useState(false);
@@ -19,7 +20,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-white">
       <Navbar />
       
-      <main className="pt-24 pb-12">
+      <main className="pt-24 pb-0">
         {/* Module 2: Bento Grid Homepage */}
         <section className="mb-12">
           <div className="text-center mb-8 px-4">
@@ -40,15 +41,8 @@ const App: React.FC = () => {
         <RoiSection />
       </main>
 
-      {/* Footer / Credits */}
-      <footer className="bg-slate-900 text-white py-12 text-center">
-        <div className="max-w-7xl mx-auto px-6">
-          <p className="text-slate-500 mb-4">Proposal prepared for Smile HVAC</p>
-          <div className="text-sm font-medium">
-            Tech Stack: React • Tailwind • ElevenLabs Integration • Google Gemini
-          </div>
-        </div>
-      </footer>
+      {/* Footer */}
+      <Footer />
 
       {/* Floating AI Agent */}
       <AiVoiceAgent />
