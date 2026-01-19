@@ -43,6 +43,19 @@ const BentoGrid: React.FC = () => {
     return `${Math.ceil(minutes * multiplier)}m`;
   };
 
+  // Button Handlers
+  const handleBooking = () => {
+    alert("DEMO ACTION: Initiating Emergency Booking Flow...\n\nIn the live app, this would open the AI scheduling widget or dispatch form.");
+  };
+
+  const handleVerify = () => {
+    alert(`DEMO ACTION: Verifying eligibility...\n\nBased on your inputs (${houseType} home, ${heatingType} heating), you qualify for the estimated $${rebateAmount.toLocaleString()} rebate.`);
+  };
+
+  const handleJoinProtection = () => {
+    alert("DEMO ACTION: Smile Protection Plan\n\nRedirecting to subscription checkout...");
+  };
+
   // Quick status Badge helper
   const StatusBadge = ({ status }: { status: TechStatus }) => {
     const config = {
@@ -117,7 +130,7 @@ const BentoGrid: React.FC = () => {
         </div>
 
         <div className="relative z-10 flex flex-col sm:flex-row gap-4 mt-8">
-          <button className="bg-white text-slate-900 px-8 py-4 rounded-xl font-bold hover:bg-gray-100 transition-colors flex items-center justify-center gap-2 shadow-lg">
+          <button onClick={handleBooking} className="bg-white text-slate-900 px-8 py-4 rounded-xl font-bold hover:bg-gray-100 transition-colors flex items-center justify-center gap-2 shadow-lg">
             Book Emergency Repair
             <ArrowRight className="w-5 h-5" />
           </button>
@@ -287,7 +300,7 @@ const BentoGrid: React.FC = () => {
               <p className="text-3xl font-black text-green-600 tracking-tight">${rebateAmount.toLocaleString()}</p>
             </div>
 
-            <button className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors">
+            <button onClick={handleVerify} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors">
               Verify Eligibility
             </button>
           </div>
@@ -325,7 +338,7 @@ const BentoGrid: React.FC = () => {
           <h3 className="text-xl font-bold mb-1">Smile Protection Plan</h3>
           <p className="text-red-100 text-sm">Priority service & free maintenance for $14.99/mo.</p>
         </div>
-        <button className="relative z-10 bg-white text-smileRed px-6 py-2 rounded-lg font-bold text-sm hover:bg-red-50 transition-colors">
+        <button onClick={handleJoinProtection} className="relative z-10 bg-white text-smileRed px-6 py-2 rounded-lg font-bold text-sm hover:bg-red-50 transition-colors">
           Join Now
         </button>
       </div>

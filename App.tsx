@@ -22,7 +22,7 @@ const App: React.FC = () => {
       
       <main className="pt-24 pb-0">
         {/* Module 2: Bento Grid Homepage */}
-        <section className="mb-12">
+        <section id="home" className="mb-12 scroll-mt-28">
           <div className="text-center mb-8 px-4">
             <span className="bg-gray-100 text-gray-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">
               Proposed Homepage Structure
@@ -32,13 +32,19 @@ const App: React.FC = () => {
         </section>
 
         {/* Module 1: UX Audit */}
-        <UxAuditSection />
+        <div id="ux-audit" className="scroll-mt-28">
+           <UxAuditSection />
+        </div>
 
         {/* Module 3: Agent Intelligence */}
-        <KnowledgeBase />
+        <div id="agent-intel" className="scroll-mt-28">
+            <KnowledgeBase />
+        </div>
 
         {/* Module 4: ROI Business Case */}
-        <RoiSection />
+        <div id="business-case" className="scroll-mt-28">
+            <RoiSection />
+        </div>
       </main>
 
       {/* Footer */}
