@@ -69,7 +69,7 @@ const UxAuditSection: React.FC = () => {
                 <CheckCircle className="w-5 h-5 text-green-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-bold text-slate-900">Context-Aware Modules</p>
-                  <p className="text-sm text-slate-500">Detects January date -> Prioritizes Furnace Repair & Heat Pumps.</p>
+                  <p className="text-sm text-slate-500">Detects January date &rarr; Prioritizes Furnace Repair & Heat Pumps.</p>
                 </div>
               </li>
               <li className="flex items-start gap-3">
