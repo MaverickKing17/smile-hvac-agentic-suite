@@ -1,5 +1,7 @@
 {
   "name": "Smile HVAC - 2026 Proposal",
   "description": "High-conversion agentic design proposal for Smile HVAC featuring Bento Grid layout and AI integration.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
