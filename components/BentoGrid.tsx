@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { MapPin, ArrowRight, Thermometer, ShieldCheck, DollarSign, Clock, Flame, Zap, Droplets } from 'lucide-react';
+import { MapPin, ArrowRight, Thermometer, ShieldCheck, DollarSign, Clock, Flame, Zap, Droplets, Car } from 'lucide-react';
 import { TECHNICIANS } from '../constants';
 import { TechStatus } from '../types';
 
 const BentoGrid: React.FC = () => {
   const [houseType, setHouseType] = useState('detached');
   const [heatingType, setHeatingType] = useState('furnace');
+  const [trafficLevel, setTrafficLevel] = useState<'light' | 'moderate' | 'heavy'>('moderate');
   
   // Dynamic Rebate Calculation
   const rebateAmount = useMemo(() => {
@@ -26,24 +27,64 @@ const BentoGrid: React.FC = () => {
     return Math.ceil(base / 50) * 50;
   }, [houseType, heatingType]);
 
+  // ETA Calculation based on Traffic
+  const getAdjustedEta = (baseEta: string | undefined) => {
+    if (!baseEta) return null;
+    const minutes = parseInt(baseEta.replace('m', ''));
+    if (isNaN(minutes)) return baseEta;
+
+    let multiplier = 1;
+    switch (trafficLevel) {
+      case 'light': multiplier = 0.8; break;
+      case 'heavy': multiplier = 1.4; break;
+      default: multiplier = 1;
+    }
+
+    return `${Math.ceil(minutes * multiplier)}m`;
+  };
+
   // Quick status Badge helper
   const StatusBadge = ({ status }: { status: TechStatus }) => {
     const config = {
-      [TechStatus.AVAILABLE]: { bg: 'bg-green-100', text: 'text-green-700', dot: 'bg-green-500' },
-      [TechStatus.ON_JOB]: { bg: 'bg-yellow-100', text: 'text-yellow-700', dot: 'bg-yellow-500' },
-      [TechStatus.EN_ROUTE]: { bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
-      [TechStatus.OFF_DUTY]: { bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400' },
+      [TechStatus.AVAILABLE]: { 
+        bg: 'bg-emerald-50', 
+        text: 'text-emerald-700', 
+        dot: 'bg-emerald-500', 
+        ping: 'bg-emerald-400',
+        border: 'border-emerald-200' 
+      },
+      [TechStatus.ON_JOB]: { 
+        bg: 'bg-amber-50', 
+        text: 'text-amber-700', 
+        dot: 'bg-amber-500', 
+        ping: 'bg-amber-400',
+        border: 'border-amber-200' 
+      },
+      [TechStatus.EN_ROUTE]: { 
+        bg: 'bg-blue-50', 
+        text: 'text-blue-700', 
+        dot: 'bg-blue-500', 
+        ping: 'bg-blue-400',
+        border: 'border-blue-200' 
+      },
+      [TechStatus.OFF_DUTY]: { 
+        bg: 'bg-slate-50', 
+        text: 'text-slate-500', 
+        dot: 'bg-slate-400', 
+        ping: 'bg-slate-300',
+        border: 'border-slate-200' 
+      },
     };
 
     const c = config[status];
 
     return (
-      <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${c.bg} ${c.text}`}>
-        <span className="relative flex h-1.5 w-1.5">
+      <span className={`inline-flex items-center gap-2 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider border transition-all duration-300 hover:shadow-sm ${c.bg} ${c.text} ${c.border}`}>
+        <span className="relative flex h-2 w-2">
           {status !== TechStatus.OFF_DUTY && (
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${c.dot}`}></span>
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${c.ping}`}></span>
           )}
-          <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${c.dot}`}></span>
+          <span className={`relative inline-flex rounded-full h-2 w-2 ${c.dot}`}></span>
         </span>
         {status.replace('_', ' ')}
       </span>
@@ -58,8 +99,11 @@ const BentoGrid: React.FC = () => {
         <div className="absolute top-0 right-0 w-64 h-64 bg-smileRed opacity-10 rounded-full blur-3xl transform translate-x-1/2 -translate-y-1/2 group-hover:scale-110 transition-transform duration-700"></div>
         
         <div className="relative z-10">
-          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-3 py-1 rounded-full border border-white/10 mb-6">
-            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-3 py-1 rounded-full border border-white/10 mb-6 shadow-lg shadow-black/10">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+            </span>
             <span className="text-xs font-medium text-white tracking-wide">High Demand: 4 Techs Active</span>
           </div>
           <h1 className="text-4xl md:text-5xl font-black text-white font-heading leading-tight mb-4">
@@ -90,43 +134,79 @@ const BentoGrid: React.FC = () => {
 
       {/* Card 2: Real-time Technician Status (Span 1 col, 2 rows) */}
       <div className="col-span-1 md:col-span-1 md:row-span-2 bg-white rounded-3xl border border-gray-100 shadow-sm p-6 flex flex-col">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <h3 className="font-bold text-slate-900 flex items-center gap-2">
             <MapPin className="w-5 h-5 text-smileRed" />
             Live Map
           </h3>
           <span className="text-xs text-gray-400">GTA Zone</span>
         </div>
+
+        {/* Traffic Simulation Controls */}
+        <div className="mb-4 bg-gray-50 rounded-xl p-3 border border-gray-100">
+          <div className="flex items-center gap-2 mb-2 text-xs font-bold text-slate-500 uppercase tracking-wide">
+            <Car className="w-3 h-3" />
+            Traffic Conditions
+          </div>
+          <div className="flex rounded-lg bg-gray-200 p-1">
+            <button 
+              onClick={() => setTrafficLevel('light')}
+              className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${trafficLevel === 'light' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Light
+            </button>
+            <button 
+              onClick={() => setTrafficLevel('moderate')}
+              className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${trafficLevel === 'moderate' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Normal
+            </button>
+            <button 
+              onClick={() => setTrafficLevel('heavy')}
+              className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${trafficLevel === 'heavy' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Heavy
+            </button>
+          </div>
+        </div>
         
         <div className="flex-1 space-y-4">
           {TECHNICIANS.map((tech) => (
-            <div key={tech.id} className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer group">
+            <div key={tech.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 hover:bg-white hover:shadow-md transition-all duration-300 cursor-pointer group border border-transparent hover:border-gray-100">
               <div className="relative">
-                <img src={tech.avatar} alt={tech.name} className="w-10 h-10 rounded-full object-cover" />
+                <img src={tech.avatar} alt={tech.name} className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm" />
                 {tech.status === TechStatus.AVAILABLE && (
-                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+                  <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full"></span>
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-center mb-1">
                   <p className="text-sm font-bold text-slate-900">{tech.name}</p>
                   <StatusBadge status={tech.status} />
                 </div>
-                <p className="text-xs text-gray-500 truncate mt-1">
-                  {tech.currentLocation}
-                </p>
-                {tech.eta && (
-                  <p className="text-xs text-smileRed font-medium mt-1">
-                    ~{tech.eta} away
+                <div className="flex items-center justify-between">
+                   <p className="text-xs text-gray-500 truncate">
+                    {tech.currentLocation}
                   </p>
-                )}
+                  {tech.eta && (
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors duration-500 ${
+                      trafficLevel === 'heavy' ? 'bg-red-100 text-red-700' :
+                      trafficLevel === 'light' ? 'bg-emerald-100 text-emerald-700' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>
+                      ~{getAdjustedEta(tech.eta)}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           ))}
         </div>
         
         <div className="mt-4 pt-4 border-t border-gray-100 text-center">
-          <p className="text-xs text-gray-400">Updated: Just now</p>
+          <p className="text-xs text-gray-400">
+            ETAs updated based on live traffic data
+          </p>
         </div>
       </div>
 
