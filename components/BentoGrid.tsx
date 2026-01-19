@@ -1,11 +1,31 @@
-import React, { useState } from 'react';
-import { MapPin, ArrowRight, Thermometer, ShieldCheck, DollarSign, Clock } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { MapPin, ArrowRight, Thermometer, ShieldCheck, DollarSign, Clock, Flame, Zap, Droplets } from 'lucide-react';
 import { TECHNICIANS } from '../constants';
 import { TechStatus } from '../types';
 
 const BentoGrid: React.FC = () => {
   const [houseType, setHouseType] = useState('detached');
+  const [heatingType, setHeatingType] = useState('furnace');
   
+  // Dynamic Rebate Calculation
+  const rebateAmount = useMemo(() => {
+    let base = 0;
+    // Base amount by current heating source
+    switch (heatingType) {
+      case 'furnace': base = 7100; break;
+      case 'electric': base = 4200; break;
+      case 'oil': base = 6500; break;
+      default: base = 7100;
+    }
+
+    // Adjustment by home type (mocking efficiency potential)
+    if (houseType === 'town') base = Math.floor(base * 0.85); // Lower potential
+    if (houseType === 'semi') base = Math.floor(base * 0.95);
+
+    // Round to nearest 50
+    return Math.ceil(base / 50) * 50;
+  }, [houseType, heatingType]);
+
   // Quick status Badge helper
   const StatusBadge = ({ status }: { status: TechStatus }) => {
     const colors = {
@@ -111,7 +131,7 @@ const BentoGrid: React.FC = () => {
           <div className="inline-block bg-green-100 text-green-800 text-[10px] font-bold px-2 py-1 rounded mb-4">
             ENBRIDGE REBATES 2026
           </div>
-          <h3 className="text-2xl font-bold text-slate-900 mb-2">Qualify for $7,100?</h3>
+          <h3 className="text-2xl font-bold text-slate-900 mb-2">Qualify for ${rebateAmount.toLocaleString()}?</h3>
           <p className="text-sm text-slate-500 mb-6">Heat Pump upgrades are heavily subsidized right now.</p>
           
           <div className="space-y-4">
@@ -133,10 +153,49 @@ const BentoGrid: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-700 uppercase mb-1 block">Current System</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button 
+                  onClick={() => setHeatingType('furnace')}
+                  className={`text-xs py-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
+                    heatingType === 'furnace' 
+                    ? 'bg-green-600 text-white border-green-600' 
+                    : 'bg-white text-slate-600 border-gray-200 hover:border-green-300'
+                  }`}
+                >
+                  <Flame className="w-3 h-3" />
+                  Gas
+                </button>
+                <button 
+                  onClick={() => setHeatingType('electric')}
+                  className={`text-xs py-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
+                    heatingType === 'electric' 
+                    ? 'bg-green-600 text-white border-green-600' 
+                    : 'bg-white text-slate-600 border-gray-200 hover:border-green-300'
+                  }`}
+                >
+                  <Zap className="w-3 h-3" />
+                  Elec
+                </button>
+                <button 
+                  onClick={() => setHeatingType('oil')}
+                  className={`text-xs py-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-all ${
+                    heatingType === 'oil' 
+                    ? 'bg-green-600 text-white border-green-600' 
+                    : 'bg-white text-slate-600 border-gray-200 hover:border-green-300'
+                  }`}
+                >
+                  <Droplets className="w-3 h-3" />
+                  Oil
+                </button>
+              </div>
+            </div>
             
             <div className="bg-white p-4 rounded-xl border border-green-100 shadow-sm text-center">
               <p className="text-xs text-slate-400 mb-1">Estimated Rebate</p>
-              <p className="text-3xl font-black text-green-600 tracking-tight">$7,100</p>
+              <p className="text-3xl font-black text-green-600 tracking-tight">${rebateAmount.toLocaleString()}</p>
             </div>
 
             <button className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors">
