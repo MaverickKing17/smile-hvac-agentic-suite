@@ -28,14 +28,23 @@ const BentoGrid: React.FC = () => {
 
   // Quick status Badge helper
   const StatusBadge = ({ status }: { status: TechStatus }) => {
-    const colors = {
-      [TechStatus.AVAILABLE]: 'bg-green-100 text-green-700',
-      [TechStatus.ON_JOB]: 'bg-yellow-100 text-yellow-700',
-      [TechStatus.EN_ROUTE]: 'bg-blue-100 text-blue-700',
-      [TechStatus.OFF_DUTY]: 'bg-gray-100 text-gray-500',
+    const config = {
+      [TechStatus.AVAILABLE]: { bg: 'bg-green-100', text: 'text-green-700', dot: 'bg-green-500' },
+      [TechStatus.ON_JOB]: { bg: 'bg-yellow-100', text: 'text-yellow-700', dot: 'bg-yellow-500' },
+      [TechStatus.EN_ROUTE]: { bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
+      [TechStatus.OFF_DUTY]: { bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400' },
     };
+
+    const c = config[status];
+
     return (
-      <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase ${colors[status]}`}>
+      <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${c.bg} ${c.text}`}>
+        <span className="relative flex h-1.5 w-1.5">
+          {status !== TechStatus.OFF_DUTY && (
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${c.dot}`}></span>
+          )}
+          <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${c.dot}`}></span>
+        </span>
         {status.replace('_', ' ')}
       </span>
     );
