@@ -28,11 +28,22 @@ const AiVoiceAgent: React.FC = () => {
     return () => window.removeEventListener('smile-trigger-ai', handleTrigger);
   }, []);
 
+  // Define the dynamic variables required by the Melissa Agent's first message
+  // These are mandatory as specified in the error message: {'service_location', 'user_name'}
+  const dynamicVariables = {
+    user_name: "Valued Customer",
+    service_location: "Toronto/GTA"
+  };
+
   return (
     <div className="fixed bottom-6 right-6 z-[9999]">
-      {/* Melissa AI Agent Widget */}
+      {/* 
+          Melissa AI Agent Widget 
+          Fix: Added dynamic-variables attribute to satisfy the agent's prompt requirements.
+      */}
       <ElevenLabsConvAI 
         agent-id="agent_9401kfc1kyg8egxrmwf4542hvrtq"
+        dynamic-variables={JSON.stringify(dynamicVariables)}
       ></ElevenLabsConvAI>
       
       {/* Floating tag for desktop users */}
