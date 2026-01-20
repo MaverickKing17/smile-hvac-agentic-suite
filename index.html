@@ -6,6 +6,7 @@
     <title>Smile HVAC - 2026 Experience</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async type="text/javascript"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -55,6 +56,11 @@
       .smile-card:hover {
         transform: translateY(-4px);
         box-shadow: 0 12px 24px -10px rgba(0,0,0,0.1);
+      }
+
+      /* Style the ElevenLabs widget to match brand if possible via CSS variables if exposed */
+      elevenlabs-convai {
+        --elevenlabs-widget-primary-color: #A41F20;
       }
     </style>
   <script type="importmap">

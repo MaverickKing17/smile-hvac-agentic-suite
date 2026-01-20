@@ -23,7 +23,8 @@ const BentoGrid: React.FC = () => {
     if (isSyncing) return;
     setIsSyncing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+      // Fix: Initialize GoogleGenAI with the API key from environment directly.
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       let lat = 43.6532; // Default Toronto
       let lng = -79.3832;
@@ -54,7 +55,8 @@ const BentoGrid: React.FC = () => {
         },
       });
 
-      const text = response.text.toUpperCase();
+      // Fix: Use the .text property directly (not a method) as per SDK rules.
+      const text = response.text?.toUpperCase() || '';
       if (text.includes('HEAVY')) setTrafficLevel('heavy');
       else if (text.includes('LIGHT')) setTrafficLevel('light');
       else setTrafficLevel('moderate');
