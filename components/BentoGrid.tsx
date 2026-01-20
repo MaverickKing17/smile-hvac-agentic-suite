@@ -1,13 +1,17 @@
-import React, { useState, useMemo } from 'react';
-import { MapPin, ArrowRight, DollarSign, Clock, Flame, Zap, Droplets, Car, ShieldCheck } from 'lucide-react';
+
+import React, { useState, useMemo, useEffect } from 'react';
+import { MapPin, ArrowRight, Clock, Flame, Zap, Droplets, Car, ShieldCheck, RefreshCw, AlertTriangle } from 'lucide-react';
 import { TECHNICIANS } from '../constants';
 import { TechStatus } from '../types';
+import { GoogleGenAI } from "@google/genai";
 
 const BentoGrid: React.FC = () => {
   const [houseType, setHouseType] = useState('detached');
   const [heatingType, setHeatingType] = useState('furnace');
   const [trafficLevel, setTrafficLevel] = useState<'light' | 'moderate' | 'heavy'>('moderate');
+  const [isSyncing, setIsSyncing] = useState(false);
   const [showRebateResult, setShowRebateResult] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
   
   const rebateAmount = useMemo(() => {
     let base = heatingType === 'electric' ? 7500 : (heatingType === 'furnace' ? 2000 : 10000);
@@ -15,10 +19,62 @@ const BentoGrid: React.FC = () => {
     return Math.ceil(base / 50) * 50;
   }, [houseType, heatingType]);
 
+  const fetchLiveTraffic = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+      
+      let lat = 43.6532; // Default Toronto
+      let lng = -79.3832;
+
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+        });
+        lat = position.coords.latitude;
+        lng = position.coords.longitude;
+      } catch (e) {
+        console.warn("Geolocation failed, using default Toronto coords.");
+      }
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: "Analyze current traffic conditions in the Greater Toronto Area (GTA). Based on congestion, accidents, and construction, classify the overall traffic as exactly one of these words: LIGHT, MODERATE, or HEAVY. Provide a one sentence explanation why.",
+        config: {
+          tools: [{ googleMaps: {} }],
+          toolConfig: {
+            retrievalConfig: {
+              latLng: {
+                latitude: lat,
+                longitude: lng
+              }
+            }
+          }
+        },
+      });
+
+      const text = response.text.toUpperCase();
+      if (text.includes('HEAVY')) setTrafficLevel('heavy');
+      else if (text.includes('LIGHT')) setTrafficLevel('light');
+      else setTrafficLevel('moderate');
+
+      setLastSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    } catch (error) {
+      console.error("Traffic Sync Error:", error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveTraffic();
+  }, []);
+
   const getAdjustedEta = (baseEta: string | undefined) => {
     if (!baseEta) return null;
     const minutes = parseInt(baseEta);
-    const multiplier = trafficLevel === 'light' ? 0.7 : (trafficLevel === 'heavy' ? 1.5 : 1);
+    const multiplier = trafficLevel === 'light' ? 0.7 : (trafficLevel === 'heavy' ? 1.6 : 1);
     return `${Math.ceil(minutes * multiplier)}m`;
   };
 
@@ -79,25 +135,51 @@ const BentoGrid: React.FC = () => {
 
       {/* Tech Live Map Card */}
       <div className="col-span-1 md:col-span-1 md:row-span-2 bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 p-6 flex flex-col smile-card">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <h3 className="font-black text-slate-900 flex items-center gap-2 text-sm uppercase tracking-widest">
             <MapPin className="w-4 h-4 text-smileRed" />
             Live Dispatch
           </h3>
+          <button 
+            onClick={fetchLiveTraffic} 
+            disabled={isSyncing}
+            className={`p-2 rounded-xl border border-slate-100 transition-all ${isSyncing ? 'bg-slate-50' : 'hover:bg-slate-50 active:scale-90'}`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin text-smileRed' : ''}`} />
+          </button>
         </div>
-        <div className="mb-6 bg-slate-50 rounded-2xl p-4 border border-slate-100">
-          <div className="flex items-center gap-2 mb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-            <Car className="w-3 h-3" />
-            Live Traffic ETA
+
+        <div className="mb-6 bg-slate-900 rounded-2xl p-4 border border-slate-800 relative overflow-hidden">
+          <div className={`absolute inset-0 bg-red-600/10 transition-opacity duration-1000 ${trafficLevel === 'heavy' ? 'opacity-100' : 'opacity-0'}`}></div>
+          <div className="flex items-center justify-between mb-3 relative z-10">
+            <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <Car className="w-3 h-3" />
+              AI Traffic Radar
+            </div>
+            {lastSync && (
+              <span className="text-[9px] font-bold text-slate-500 uppercase">Updated {lastSync}</span>
+            )}
           </div>
-          <div className="flex bg-slate-200/50 p-1 rounded-xl">
+          
+          <div className="flex items-center gap-3 mb-4 relative z-10">
+            <div className={`w-3 h-3 rounded-full animate-pulse-slow ${trafficLevel === 'light' ? 'bg-emerald-500' : trafficLevel === 'heavy' ? 'bg-red-500' : 'bg-amber-500'}`}></div>
+            <div>
+              <p className={`text-xs font-black uppercase tracking-tighter ${trafficLevel === 'heavy' ? 'text-red-400' : 'text-white'}`}>
+                {trafficLevel === 'heavy' ? 'HEAVY CONGESTION' : trafficLevel === 'light' ? 'CLEAR CONDITIONS' : 'MODERATE FLOW'}
+              </p>
+              <p className="text-[9px] text-slate-400 font-medium">GTAs live conditions fetched via Maps Grounding</p>
+            </div>
+          </div>
+
+          <div className="flex bg-white/5 p-1 rounded-xl relative z-10">
             {['light', 'moderate', 'heavy'].map(l => (
-              <button key={l} onClick={() => setTrafficLevel(l as any)} className={`flex-1 py-1.5 text-[9px] font-black rounded-lg transition-all uppercase ${trafficLevel === l ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+              <button key={l} onClick={() => setTrafficLevel(l as any)} className={`flex-1 py-1.5 text-[9px] font-black rounded-lg transition-all uppercase ${trafficLevel === l ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-white/80'}`}>
                 {l}
               </button>
             ))}
           </div>
         </div>
+
         <div className="space-y-3 flex-1 overflow-y-auto">
           {TECHNICIANS.map(tech => (
             <div key={tech.id} className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-transparent hover:border-slate-200 transition-all">
@@ -115,6 +197,13 @@ const BentoGrid: React.FC = () => {
             </div>
           ))}
         </div>
+        
+        {trafficLevel === 'heavy' && (
+          <div className="mt-4 p-3 bg-red-50 rounded-xl border border-red-100 flex items-center gap-2">
+            <AlertTriangle className="w-3 h-3 text-red-600 shrink-0" />
+            <p className="text-[9px] font-bold text-red-800 uppercase tracking-tighter">GTA Traffic Delay: ETAs adjusted for congestion</p>
+          </div>
+        )}
       </div>
 
       {/* Rebate Card */}
@@ -175,7 +264,9 @@ const BentoGrid: React.FC = () => {
       {/* Response Stat */}
       <div className="col-span-1 bg-slate-900 rounded-[2rem] p-6 flex flex-col items-center justify-center text-center smile-card">
         <Clock className="w-8 h-8 text-smileRed mb-2" />
-        <h3 className="text-4xl font-black text-white leading-none mb-1 tracking-tighter">42m</h3>
+        <h3 className="text-4xl font-black text-white leading-none mb-1 tracking-tighter">
+          {trafficLevel === 'heavy' ? '58m' : trafficLevel === 'light' ? '28m' : '42m'}
+        </h3>
         <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Live Response <br/>Vaughan / North York</p>
       </div>
 

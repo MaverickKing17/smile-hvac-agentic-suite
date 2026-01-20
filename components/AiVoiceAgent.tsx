@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { Phone, Mic, MicOff, X, Volume2, ShieldAlert, Loader2 } from 'lucide-react';
+import { Phone, Mic, MicOff, X, Volume2, ShieldAlert, Loader2, AlertCircle } from 'lucide-react';
 
+// Manual Base64 decoding as per instructions
 function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -12,6 +13,7 @@ function decode(base64: string) {
   return bytes;
 }
 
+// Manual Base64 encoding as per instructions
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
@@ -21,29 +23,46 @@ function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+/**
+ * Decodes raw PCM data from Uint8Array to AudioBuffer.
+ * Ensures the data is a multiple of 2 bytes for Int16 conversion.
+ */
 async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
   sampleRate: number,
   numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+): Promise<AudioBuffer | null> {
+  try {
+    // Safety check for PCM alignment
+    const bufferLength = data.byteLength;
+    if (bufferLength % 2 !== 0) {
+      console.warn("Audio buffer alignment mismatch, trimming last byte.");
+      data = data.slice(0, bufferLength - 1);
     }
+
+    const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
+    const frameCount = dataInt16.length / numChannels;
+    const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+    for (let channel = 0; channel < numChannels; channel++) {
+      const channelData = buffer.getChannelData(channel);
+      for (let i = 0; i < frameCount; i++) {
+        channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+      }
+    }
+    return buffer;
+  } catch (err) {
+    console.error("Manual audio decode failed:", err);
+    return null;
   }
-  return buffer;
 }
 
 const AiVoiceAgent: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isActive, setIsActive] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'listening' | 'speaking'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'listening' | 'speaking' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   const sessionRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -55,8 +74,7 @@ const AiVoiceAgent: React.FC = () => {
   useEffect(() => {
     const handleTrigger = () => {
       setIsOpen(true);
-      // We wait for the user to explicitly click "Connect to Live Agent" inside the expanded UI
-      // to satisfy browser AudioContext requirements on all devices.
+      setErrorMessage(null);
     };
     window.addEventListener('smile-trigger-ai', handleTrigger);
     return () => window.removeEventListener('smile-trigger-ai', handleTrigger);
@@ -67,12 +85,20 @@ const AiVoiceAgent: React.FC = () => {
     
     try {
       setStatus('connecting');
-      setIsActive(true);
+      setErrorMessage(null);
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+      // 1. Check for API key
+      const apiKey = process.env.API_KEY;
+      if (!apiKey) {
+        throw new Error("API Key is missing from configuration.");
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       
-      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      // 2. Initialize Audio Contexts after user gesture
+      const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+      const inputCtx = new AudioContextClass({ sampleRate: 16000 });
+      const outputCtx = new AudioContextClass({ sampleRate: 24000 });
       
       inputAudioCtxRef.current = inputCtx;
       outputAudioCtxRef.current = outputCtx;
@@ -81,15 +107,24 @@ const AiVoiceAgent: React.FC = () => {
       await inputCtx.resume();
       await outputCtx.resume();
       
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 3. Request Microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       streamRef.current = stream;
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
-            console.log("Voice Session Connected");
+            console.log("Voice Session Established Successfully");
             setStatus('listening');
+            setIsActive(true);
+            
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             
@@ -98,7 +133,7 @@ const AiVoiceAgent: React.FC = () => {
               const l = inputData.length;
               const int16 = new Int16Array(l);
               for (let i = 0; i < l; i++) {
-                int16[i] = inputData[i] * 32768;
+                int16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
               }
               const pcmBlob = {
                 data: encode(new Uint8Array(int16.buffer)),
@@ -107,7 +142,7 @@ const AiVoiceAgent: React.FC = () => {
               
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ media: pcmBlob });
-              }).catch((e) => console.error("Send Error:", e));
+              }).catch((e) => console.error("Mic Send Error:", e));
             };
 
             source.connect(scriptProcessor);
@@ -121,22 +156,24 @@ const AiVoiceAgent: React.FC = () => {
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
               
               const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-              const source = ctx.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(ctx.destination);
-              
-              source.addEventListener('ended', () => {
-                sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0) setStatus('listening');
-              });
+              if (audioBuffer) {
+                const source = ctx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(ctx.destination);
+                
+                source.addEventListener('ended', () => {
+                  sourcesRef.current.delete(source);
+                  if (sourcesRef.current.size === 0) setStatus('listening');
+                });
 
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              sourcesRef.current.add(source);
+                source.start(nextStartTimeRef.current);
+                nextStartTimeRef.current += audioBuffer.duration;
+                sourcesRef.current.add(source);
+              }
             }
 
             if (message.serverContent?.interrupted) {
-              console.log("Interrupt received");
+              console.log("Interaction interruption detected");
               for (const s of sourcesRef.current) try { s.stop(); } catch(e) {}
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
@@ -144,11 +181,13 @@ const AiVoiceAgent: React.FC = () => {
             }
           },
           onerror: (e) => {
-            console.error("Live Error:", e);
+            console.error("Live API Session Error:", e);
+            setErrorMessage("Connection lost. Please try again.");
             stopSession();
           },
           onclose: (e) => {
-            console.log("Session Closed:", e);
+            console.log("Live API Session Closed:", e);
+            if (!isActive) setErrorMessage("Unable to establish connection.");
             stopSession();
           }
         },
@@ -159,19 +198,35 @@ const AiVoiceAgent: React.FC = () => {
           },
           systemInstruction: `
             You are a dual-persona AI for Smile HVAC. 
-            PRIMARY: Chloe (Front-Desk). Expert in Home Renovation Savings Program. Offer $7,500 (Electric) or $2,000 (Gas) rebates.
-            SECONDARY: Sam (Emergency Dispatch). Triggered by gas smell, no heat, leak.
-             Chloe must hand off: "That sounds urgent. Let me get Sam, our emergency specialist, on the line."
-            SAFETY: If "gas smell" is mentioned, say: "For your safety, hang up, leave house immediately, and call 911."
-            Start as Chloe: "Thanks for calling Smile HVAC! Are you calling for a repair or about those $7,500 rebates?"
+            PRIMARY PERSONA: Chloe (Front-Desk / Rebates)
+            - Tone: Friendly, patient, and ethical.
+            - Expertise: 2026 Home Renovation Savings (HRS) program.
+            - Explain rebates: Up to $7,500 if they currently use electric heating, or $2,000 if they use gas.
+            
+            SECONDARY PERSONA: Sam (Emergency Dispatch)
+            - Tone: Calm, fast, and authoritative.
+            - Trigger: If the caller mentions "gas smell," "no heat," "water leak," or "banging noises."
+            - Hand-off Rule: Chloe must say: "That sounds urgent. Let me get Sam, our emergency specialist, on the line for you."
+            
+            MANDATORY SAFETY RULE:
+            If a "gas smell" is mentioned, Sam must say: "For your safety, please hang up, leave the house immediately, and call 911. Once you are safe, call us back and we will dispatch a tech."
+            
+            Collect: Name, Phone, and Heating Type.
+            Start as Chloe: "Thanks for calling Smile HVAC! Are you calling for a repair or about the $7,500 heat pump rebates?"
           `,
         }
       });
 
       sessionRef.current = await sessionPromise;
-    } catch (err) {
-      console.error("Initiation Error:", err);
+    } catch (err: any) {
+      console.error("Failed to start session:", err);
+      if (err.message?.includes('Permission denied')) {
+        setErrorMessage("Microphone access was denied. Please check your browser settings.");
+      } else {
+        setErrorMessage(err.message || "An unknown error occurred.");
+      }
       stopSession();
+      setStatus('error');
     }
   };
 
@@ -185,7 +240,7 @@ const AiVoiceAgent: React.FC = () => {
     for (const s of sourcesRef.current) try { s.stop(); } catch(e) {}
     sourcesRef.current.clear();
     setIsActive(false);
-    setStatus('idle');
+    if (status !== 'error') setStatus('idle');
   };
 
   return (
@@ -198,27 +253,48 @@ const AiVoiceAgent: React.FC = () => {
                 <Phone className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h3 className="text-white font-bold leading-none tracking-tight">Smile AI Voice</h3>
-                <span className="text-[10px] text-green-400 font-bold uppercase tracking-widest">Active Connection</span>
+                <h3 className="text-white font-bold leading-none tracking-tight uppercase text-xs">Smile AI Voice</h3>
+                <span className="text-[9px] text-green-400 font-bold uppercase tracking-widest">Live 2026 Support</span>
               </div>
             </div>
             <button onClick={() => { stopSession(); setIsOpen(false); }} className="text-slate-400 hover:text-white transition-colors p-2"><X className="w-5 h-5" /></button>
           </div>
 
           <div className="p-8 flex flex-col items-center justify-center text-center space-y-6">
-            {!isActive ? (
+            {errorMessage ? (
+              <div className="space-y-4">
+                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto">
+                  <AlertCircle className="w-8 h-8 text-red-500" />
+                </div>
+                <div>
+                  <h4 className="font-black text-slate-900 text-sm uppercase">Connection Error</h4>
+                  <p className="text-xs text-slate-500 mt-2 font-medium">{errorMessage}</p>
+                </div>
+                <button onClick={() => { setErrorMessage(null); setStatus('idle'); }} className="text-smileRed font-black text-[10px] uppercase tracking-widest underline">Dismiss</button>
+              </div>
+            ) : null}
+
+            {!isActive && !errorMessage ? (
               <>
-                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-2"><Mic className="w-8 h-8 text-slate-400" /></div>
+                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-2">
+                  <Mic className="w-8 h-8 text-slate-400" />
+                </div>
                 <div>
                   <h4 className="font-black text-slate-900 text-lg leading-tight uppercase tracking-tighter">Emergency or Rebates?</h4>
-                  <p className="text-sm text-slate-500 mt-2 font-medium">Chloe and Sam are standing by to assist you.</p>
+                  <p className="text-sm text-slate-500 mt-2 font-medium">Chloe and Sam are standing by to assist you in real-time.</p>
                 </div>
-                <button onClick={startSession} className="w-full bg-smileRed hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest text-[10px]">
-                  {status === 'connecting' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-4 h-4" />}
-                  {status === 'connecting' ? 'Connecting...' : 'Connect to Live Agent'}
+                <button 
+                  onClick={startSession} 
+                  disabled={status === 'connecting'}
+                  className="w-full bg-smileRed hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest text-[10px] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {status === 'connecting' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
+                  {status === 'connecting' ? 'Establishing Line...' : 'Connect to Live Agent'}
                 </button>
               </>
-            ) : (
+            ) : null}
+
+            {isActive && !errorMessage ? (
               <>
                 <div className="relative flex items-center justify-center py-6 w-full">
                   <div className="flex gap-1.5 h-16 items-center">
@@ -235,12 +311,12 @@ const AiVoiceAgent: React.FC = () => {
                     {status === 'speaking' ? 'Agent Speaking' : 'Listening...'}
                   </div>
                   <p className="text-sm font-bold text-slate-500 uppercase tracking-tighter">
-                    {status === 'speaking' ? 'Agent Chloe is responding...' : 'Say: "Tell me about rebates"'}
+                    {status === 'speaking' ? 'Agent is responding...' : 'Go ahead, I\'m listening'}
                   </p>
                 </div>
-                <button onClick={stopSession} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase text-xs tracking-widest"><MicOff className="w-4 h-4" /> End Session</button>
+                <button onClick={stopSession} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase text-xs tracking-widest shadow-lg shadow-slate-900/20"><MicOff className="w-4 h-4" /> End Session</button>
               </>
-            )}
+            ) : null}
           </div>
           <div className="bg-red-50 p-4 border-t border-red-100 flex items-center gap-3">
             <ShieldAlert className="w-4 h-4 text-smileRed shrink-0" />
