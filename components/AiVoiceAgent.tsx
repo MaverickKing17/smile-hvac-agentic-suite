@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { Phone, Mic, MicOff, X, Volume2, ShieldAlert, Loader2 } from 'lucide-react';
 
-// Audio Helpers as per Gemini SDK requirements
 function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -53,6 +52,16 @@ const AiVoiceAgent: React.FC = () => {
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
 
+  useEffect(() => {
+    const handleTrigger = () => {
+      setIsOpen(true);
+      // Auto-start if not active
+      if (!isActive) setTimeout(startSession, 500);
+    };
+    window.addEventListener('smile-trigger-ai', handleTrigger);
+    return () => window.removeEventListener('smile-trigger-ai', handleTrigger);
+  }, [isActive]);
+
   const startSession = async () => {
     if (isActive) return;
     
@@ -60,7 +69,6 @@ const AiVoiceAgent: React.FC = () => {
       setStatus('connecting');
       setIsActive(true);
 
-      // 1. Initialize API and Audio Contexts
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
       
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -69,23 +77,17 @@ const AiVoiceAgent: React.FC = () => {
       inputAudioCtxRef.current = inputCtx;
       outputAudioCtxRef.current = outputCtx;
 
-      // Ensure contexts are resumed (browsers require this after user interaction)
       await inputCtx.resume();
       await outputCtx.resume();
       
-      // 2. Get Microphone Access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
-      // 3. Connect to Gemini Live API
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
-            console.log('Gemini Live session opened');
             setStatus('listening');
-            
-            // Start streaming audio from the microphone to the model
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             
@@ -101,10 +103,9 @@ const AiVoiceAgent: React.FC = () => {
                 mimeType: 'audio/pcm;rate=16000',
               };
               
-              // Rely on sessionPromise resolving before sending data
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ media: pcmBlob });
-              }).catch(err => console.error('Failed to send audio:', err));
+              }).catch(() => {});
             };
 
             source.connect(scriptProcessor);
@@ -124,9 +125,7 @@ const AiVoiceAgent: React.FC = () => {
               
               source.addEventListener('ended', () => {
                 sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0) {
-                  setStatus('listening');
-                }
+                if (sourcesRef.current.size === 0) setStatus('listening');
               });
 
               source.start(nextStartTimeRef.current);
@@ -135,23 +134,14 @@ const AiVoiceAgent: React.FC = () => {
             }
 
             if (message.serverContent?.interrupted) {
-              console.log('Model turn interrupted');
-              for (const s of sourcesRef.current) {
-                try { s.stop(); } catch(e) {}
-              }
+              for (const s of sourcesRef.current) try { s.stop(); } catch(e) {}
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
               setStatus('listening');
             }
           },
-          onerror: (e) => {
-            console.error('Gemini Live error:', e);
-            stopSession();
-          },
-          onclose: (e) => {
-            console.log('Gemini Live session closed:', e);
-            stopSession();
-          }
+          onerror: () => stopSession(),
+          onclose: () => stopSession()
         },
         config: {
           responseModalities: [Modality.AUDIO],
@@ -159,64 +149,37 @@ const AiVoiceAgent: React.FC = () => {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
           systemInstruction: `
-            You are a dual-persona AI system for Smile HVAC. 
-            
-            PRIMARY PERSONA: Chloe (Front-Desk). Friendly, patient, ethical. 
-            Expert in "The Home Renovation Savings (HRS) Program". 
-            Mention rebates: $7,500 for electric heat, $2,000 for gas. 
-            You must collect the caller's Name and Phone Number.
-            
-            SECONDARY PERSONA: Sam (Emergency Dispatch). Calm, fast, authoritative. 
-            Trigger: If the caller mentions gas smell, no heat, leak, or banging noises.
-            Chloe must say: "That sounds urgent. Let me get Sam, our emergency specialist, on the line for you."
-            Then act as Sam. Sam must ask for the home Address and confirm a 4-hour response guarantee.
-            
-            MANDATORY SAFETY RULE: If a "gas smell" is mentioned, Sam MUST say: "For your safety, please hang up, leave the house immediately, and call 911. Once you are safe, call us back and we will dispatch a tech."
-            
-            Start the conversation as Chloe: "Thanks for calling Smile HVAC! Are you calling about a repair or to learn more about those $7,500 government rebates?"
+            You are a dual-persona AI for Smile HVAC. 
+            PRIMARY: Chloe (Front-Desk). Expert in Home Renovation Savings Program. Offer $7,500 (Electric) or $2,000 (Gas) rebates.
+            SECONDARY: Sam (Emergency Dispatch). Triggered by gas smell, no heat, leak.
+             Chloe must hand off: "That sounds urgent. Let me get Sam, our emergency specialist, on the line."
+            SAFETY: If "gas smell" is mentioned, say: "For your safety, hang up, leave house immediately, and call 911."
+            Start as Chloe: "Thanks for calling Smile HVAC! Are you calling for a repair or about those $7,500 rebates?"
           `,
         }
       });
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error('Failed to initiate Voice Agent session:', err);
-      setIsActive(false);
-      setStatus('idle');
-      alert("Microphone access or connection failed. Please check your settings.");
+      stopSession();
     }
   };
 
   const stopSession = () => {
-    if (sessionRef.current) {
-      try { sessionRef.current.close(); } catch(e) {}
-      sessionRef.current = null;
-    }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-
+    if (sessionRef.current) try { sessionRef.current.close(); } catch(e) {}
+    sessionRef.current = null;
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
     inputAudioCtxRef.current?.close();
     outputAudioCtxRef.current?.close();
-    
-    for (const s of sourcesRef.current) {
-      try { s.stop(); } catch(e) {}
-    }
+    for (const s of sourcesRef.current) try { s.stop(); } catch(e) {}
     sourcesRef.current.clear();
-    
     setIsActive(false);
     setStatus('idle');
   };
 
-  useEffect(() => {
-    return () => stopSession();
-  }, []);
-
   return (
     <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">
-      {/* Expanded Interface */}
       {isOpen && (
         <div className="w-80 md:w-96 bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
           <div className="bg-slate-900 p-6 flex items-center justify-between">
@@ -225,100 +188,56 @@ const AiVoiceAgent: React.FC = () => {
                 <Phone className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h3 className="text-white font-bold leading-none">Smile AI Agent</h3>
-                <span className="text-[10px] text-green-400 font-bold uppercase tracking-wider">Live Voice Channel</span>
+                <h3 className="text-white font-bold leading-none tracking-tight">Smile AI Voice</h3>
+                <span className="text-[10px] text-green-400 font-bold uppercase tracking-widest">Active Connection</span>
               </div>
             </div>
-            <button 
-              onClick={() => {
-                if(isActive) stopSession();
-                setIsOpen(false);
-              }} 
-              className="text-slate-400 hover:text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <button onClick={() => { stopSession(); setIsOpen(false); }} className="text-slate-400 hover:text-white transition-colors p-2"><X className="w-5 h-5" /></button>
           </div>
 
           <div className="p-8 flex flex-col items-center justify-center text-center space-y-6">
             {!isActive ? (
               <>
-                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-2">
-                  <Mic className="w-8 h-8 text-slate-400" />
-                </div>
+                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-2"><Mic className="w-8 h-8 text-slate-400" /></div>
                 <div>
-                  <h4 className="font-bold text-slate-900 text-lg">Need help with rebates or a repair?</h4>
-                  <p className="text-sm text-slate-500 mt-2">Chloe (Front Desk) and Sam (Dispatch) are standing by.</p>
+                  <h4 className="font-black text-slate-900 text-lg leading-tight">Emergency or Rebates?</h4>
+                  <p className="text-sm text-slate-500 mt-2">Chloe and Sam are standing by to assist you.</p>
                 </div>
-                <button 
-                  onClick={startSession}
-                  disabled={status === 'connecting'}
-                  className="w-full bg-smileRed hover:bg-red-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
-                >
+                <button onClick={startSession} className="w-full bg-smileRed hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
                   {status === 'connecting' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-5 h-5" />}
-                  {status === 'connecting' ? 'Connecting...' : 'Start Live Call'}
+                  {status === 'connecting' ? 'Connecting...' : 'Connect to Live Agent'}
                 </button>
               </>
             ) : (
               <>
-                {/* Active Voice Interface */}
                 <div className="relative flex items-center justify-center py-6 w-full">
                   <div className="flex gap-1.5 h-16 items-center">
                     {[...Array(12)].map((_, i) => (
-                      <div 
-                        key={i} 
-                        className={`w-1.5 bg-smileRed rounded-full transition-all duration-150 ${
-                          status === 'speaking' ? 'animate-pulse' : 
-                          status === 'listening' ? 'opacity-40' : 'opacity-10'
-                        }`}
-                        style={{ 
-                          height: status === 'speaking' ? `${30 + Math.random() * 40}px` : '6px',
-                          animationDelay: `${i * 0.1}s`
-                        }}
-                      />
+                      <div key={i} className={`w-1.5 bg-smileRed rounded-full transition-all duration-150 ${status === 'speaking' ? 'animate-pulse' : status === 'listening' ? 'opacity-40' : 'opacity-10'}`} style={{ height: status === 'speaking' ? `${30 + Math.random() * 40}px` : '6px', animationDelay: `${i * 0.1}s` }} />
                     ))}
                   </div>
                 </div>
-
                 <div className="space-y-2">
-                  <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-tighter transition-colors ${
-                    status === 'speaking' ? 'bg-red-50 text-red-700 border-red-100' : 'bg-green-50 text-green-700 border-green-100'
-                  }`}>
-                    <span className="relative flex h-2 w-2">
-                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${status === 'speaking' ? 'bg-red-400' : 'bg-green-400'}`}></span>
-                      <span className={`relative inline-flex rounded-full h-2 w-2 ${status === 'speaking' ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                  <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black border uppercase tracking-widest transition-colors ${status === 'speaking' ? 'bg-red-50 text-red-700 border-red-100' : 'bg-green-50 text-green-700 border-green-100'}`}>
+                    <span className={`relative flex h-2 w-2 rounded-full ${status === 'speaking' ? 'bg-red-500' : 'bg-green-500'}`}>
+                      <span className={`animate-ping absolute inset-0 rounded-full opacity-75 ${status === 'speaking' ? 'bg-red-400' : 'bg-green-400'}`}></span>
                     </span>
                     {status === 'speaking' ? 'Agent Speaking' : 'Listening...'}
                   </div>
-                  <p className="text-sm text-slate-500">
-                    {status === 'speaking' ? 'Smile HVAC is responding to your request.' : 'Ask about "rebates" or tell us your emergency.'}
-                  </p>
+                  <p className="text-sm font-medium text-slate-500">Ask: "Tell me about rebates" or report an emergency.</p>
                 </div>
-
-                <button 
-                  onClick={stopSession}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-2"
-                >
-                  <MicOff className="w-5 h-5" />
-                  End Call
-                </button>
+                <button onClick={stopSession} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase text-xs tracking-widest"><MicOff className="w-4 h-4" /> End Session</button>
               </>
             )}
           </div>
-
-          <div className="bg-slate-50 p-4 border-t border-gray-100 flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-smileRed" />
-            <span className="text-[10px] text-slate-500 font-medium">EMERGENCY: Gas smell? Leave house & call 911 immediately.</span>
+          <div className="bg-red-50 p-4 border-t border-red-100 flex items-center gap-3">
+            <ShieldAlert className="w-4 h-4 text-smileRed shrink-0" />
+            <span className="text-[10px] text-red-800 font-bold uppercase tracking-tight leading-relaxed text-left">Gas smell? Leave the house and call 911 immediately.</span>
           </div>
         </div>
       )}
-
-      {/* Floating Button */}
       {!isOpen && (
-        <button 
-          onClick={() => setIsOpen(true)}
-          className="group relative flex items-center justify-center w-16 h-16 bg-smileRed hover:bg-red-700 rounded-full shadow-2xl shadow-red-500/40 transition-all hover:scale-110 active:scale-95"
-        >
+        <button onClick={() => setIsOpen(true)} className="group relative flex items-center justify-center w-16 h-16 bg-smileRed hover:bg-red-700 rounded-full shadow-2xl shadow-red-500/40 transition-all hover:scale-110 active:scale-95">
           <div className="absolute inset-0 rounded-full bg-smileRed animate-ping opacity-20 group-hover:opacity-40"></div>
           <Volume2 className="w-8 h-8 text-white relative z-10" />
           <div className="absolute -top-1 -right-1 bg-green-500 w-4 h-4 rounded-full border-2 border-white"></div>
