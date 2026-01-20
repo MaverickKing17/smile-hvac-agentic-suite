@@ -55,12 +55,12 @@ const AiVoiceAgent: React.FC = () => {
   useEffect(() => {
     const handleTrigger = () => {
       setIsOpen(true);
-      // Auto-start if not active
-      if (!isActive) setTimeout(startSession, 500);
+      // We wait for the user to explicitly click "Connect to Live Agent" inside the expanded UI
+      // to satisfy browser AudioContext requirements on all devices.
     };
     window.addEventListener('smile-trigger-ai', handleTrigger);
     return () => window.removeEventListener('smile-trigger-ai', handleTrigger);
-  }, [isActive]);
+  }, []);
 
   const startSession = async () => {
     if (isActive) return;
@@ -77,6 +77,7 @@ const AiVoiceAgent: React.FC = () => {
       inputAudioCtxRef.current = inputCtx;
       outputAudioCtxRef.current = outputCtx;
 
+      // Crucial for iOS/Android: Resume on direct user interaction
       await inputCtx.resume();
       await outputCtx.resume();
       
@@ -87,6 +88,7 @@ const AiVoiceAgent: React.FC = () => {
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
+            console.log("Voice Session Connected");
             setStatus('listening');
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
@@ -105,7 +107,7 @@ const AiVoiceAgent: React.FC = () => {
               
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ media: pcmBlob });
-              }).catch(() => {});
+              }).catch((e) => console.error("Send Error:", e));
             };
 
             source.connect(scriptProcessor);
@@ -134,14 +136,21 @@ const AiVoiceAgent: React.FC = () => {
             }
 
             if (message.serverContent?.interrupted) {
+              console.log("Interrupt received");
               for (const s of sourcesRef.current) try { s.stop(); } catch(e) {}
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
               setStatus('listening');
             }
           },
-          onerror: () => stopSession(),
-          onclose: () => stopSession()
+          onerror: (e) => {
+            console.error("Live Error:", e);
+            stopSession();
+          },
+          onclose: (e) => {
+            console.log("Session Closed:", e);
+            stopSession();
+          }
         },
         config: {
           responseModalities: [Modality.AUDIO],
@@ -161,6 +170,7 @@ const AiVoiceAgent: React.FC = () => {
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
+      console.error("Initiation Error:", err);
       stopSession();
     }
   };
@@ -181,7 +191,7 @@ const AiVoiceAgent: React.FC = () => {
   return (
     <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">
       {isOpen && (
-        <div className="w-80 md:w-96 bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div className="w-80 md:w-96 bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
           <div className="bg-slate-900 p-6 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-smileRed flex items-center justify-center">
@@ -200,11 +210,11 @@ const AiVoiceAgent: React.FC = () => {
               <>
                 <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-2"><Mic className="w-8 h-8 text-slate-400" /></div>
                 <div>
-                  <h4 className="font-black text-slate-900 text-lg leading-tight">Emergency or Rebates?</h4>
-                  <p className="text-sm text-slate-500 mt-2">Chloe and Sam are standing by to assist you.</p>
+                  <h4 className="font-black text-slate-900 text-lg leading-tight uppercase tracking-tighter">Emergency or Rebates?</h4>
+                  <p className="text-sm text-slate-500 mt-2 font-medium">Chloe and Sam are standing by to assist you.</p>
                 </div>
-                <button onClick={startSession} className="w-full bg-smileRed hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
-                  {status === 'connecting' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-5 h-5" />}
+                <button onClick={startSession} className="w-full bg-smileRed hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest text-[10px]">
+                  {status === 'connecting' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-4 h-4" />}
                   {status === 'connecting' ? 'Connecting...' : 'Connect to Live Agent'}
                 </button>
               </>
@@ -224,7 +234,9 @@ const AiVoiceAgent: React.FC = () => {
                     </span>
                     {status === 'speaking' ? 'Agent Speaking' : 'Listening...'}
                   </div>
-                  <p className="text-sm font-medium text-slate-500">Ask: "Tell me about rebates" or report an emergency.</p>
+                  <p className="text-sm font-bold text-slate-500 uppercase tracking-tighter">
+                    {status === 'speaking' ? 'Agent Chloe is responding...' : 'Say: "Tell me about rebates"'}
+                  </p>
                 </div>
                 <button onClick={stopSession} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 uppercase text-xs tracking-widest"><MicOff className="w-4 h-4" /> End Session</button>
               </>
