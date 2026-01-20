@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { Phone, Mic, MicOff, X, Volume2, ShieldAlert } from 'lucide-react';
+import { Phone, Mic, MicOff, X, Volume2, ShieldAlert, Loader2 } from 'lucide-react';
 
 // Audio Helpers as per Gemini SDK requirements
 function decode(base64: string) {
@@ -47,6 +47,7 @@ const AiVoiceAgent: React.FC = () => {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'listening' | 'speaking'>('idle');
   
   const sessionRef = useRef<any>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const inputAudioCtxRef = useRef<AudioContext | null>(null);
   const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
@@ -59,20 +60,34 @@ const AiVoiceAgent: React.FC = () => {
       setStatus('connecting');
       setIsActive(true);
 
-      const ai = new GoogleGenAI({ apiKey: (process.env as any).API_KEY });
+      // 1. Initialize API and Audio Contexts
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
       
-      inputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      outputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       
+      inputAudioCtxRef.current = inputCtx;
+      outputAudioCtxRef.current = outputCtx;
+
+      // Ensure contexts are resumed (browsers require this after user interaction)
+      await inputCtx.resume();
+      await outputCtx.resume();
+      
+      // 2. Get Microphone Access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       
+      // 3. Connect to Gemini Live API
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
+            console.log('Gemini Live session opened');
             setStatus('listening');
-            const source = inputAudioCtxRef.current!.createMediaStreamSource(stream);
-            const scriptProcessor = inputAudioCtxRef.current!.createScriptProcessor(4096, 1, 1);
+            
+            // Start streaming audio from the microphone to the model
+            const source = inputCtx.createMediaStreamSource(stream);
+            const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             
             scriptProcessor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
@@ -86,16 +101,17 @@ const AiVoiceAgent: React.FC = () => {
                 mimeType: 'audio/pcm;rate=16000',
               };
               
+              // Rely on sessionPromise resolving before sending data
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ media: pcmBlob });
-              });
+              }).catch(err => console.error('Failed to send audio:', err));
             };
 
             source.connect(scriptProcessor);
-            scriptProcessor.connect(inputAudioCtxRef.current!.destination);
+            scriptProcessor.connect(inputCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio) {
               setStatus('speaking');
               const ctx = outputAudioCtxRef.current!;
@@ -108,7 +124,9 @@ const AiVoiceAgent: React.FC = () => {
               
               source.addEventListener('ended', () => {
                 sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0) setStatus('listening');
+                if (sourcesRef.current.size === 0) {
+                  setStatus('listening');
+                }
               });
 
               source.start(nextStartTimeRef.current);
@@ -117,16 +135,21 @@ const AiVoiceAgent: React.FC = () => {
             }
 
             if (message.serverContent?.interrupted) {
-              for (const s of sourcesRef.current) s.stop();
+              console.log('Model turn interrupted');
+              for (const s of sourcesRef.current) {
+                try { s.stop(); } catch(e) {}
+              }
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
+              setStatus('listening');
             }
           },
           onerror: (e) => {
-            console.error('Session error:', e);
+            console.error('Gemini Live error:', e);
             stopSession();
           },
-          onclose: () => {
+          onclose: (e) => {
+            console.log('Gemini Live session closed:', e);
             stopSession();
           }
         },
@@ -141,38 +164,55 @@ const AiVoiceAgent: React.FC = () => {
             PRIMARY PERSONA: Chloe (Front-Desk). Friendly, patient, ethical. 
             Expert in "The Home Renovation Savings (HRS) Program". 
             Mention rebates: $7,500 for electric heat, $2,000 for gas. 
-            Collect Name and Phone.
+            You must collect the caller's Name and Phone Number.
             
             SECONDARY PERSONA: Sam (Emergency Dispatch). Calm, fast, authoritative. 
-            Trigger: Mention of gas smell, no heat, leak, or banging.
+            Trigger: If the caller mentions gas smell, no heat, leak, or banging noises.
             Chloe must say: "That sounds urgent. Let me get Sam, our emergency specialist, on the line for you."
-            Sam must ask for Address and confirm 4-hour response guarantee.
+            Then act as Sam. Sam must ask for the home Address and confirm a 4-hour response guarantee.
             
-            MANDATORY SAFETY: If "gas smell" is mentioned, Sam MUST say: "For your safety, please hang up, leave the house immediately, and call 911. Once you are safe, call us back and we will dispatch a tech."
+            MANDATORY SAFETY RULE: If a "gas smell" is mentioned, Sam MUST say: "For your safety, please hang up, leave the house immediately, and call 911. Once you are safe, call us back and we will dispatch a tech."
+            
+            Start the conversation as Chloe: "Thanks for calling Smile HVAC! Are you calling about a repair or to learn more about those $7,500 government rebates?"
           `,
         }
       });
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error('Failed to start session:', err);
+      console.error('Failed to initiate Voice Agent session:', err);
       setIsActive(false);
       setStatus('idle');
+      alert("Microphone access or connection failed. Please check your settings.");
     }
   };
 
   const stopSession = () => {
     if (sessionRef.current) {
-      // In a real scenario we'd call close, but we manage state here
+      try { sessionRef.current.close(); } catch(e) {}
       sessionRef.current = null;
     }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+
     inputAudioCtxRef.current?.close();
     outputAudioCtxRef.current?.close();
-    for (const s of sourcesRef.current) s.stop();
+    
+    for (const s of sourcesRef.current) {
+      try { s.stop(); } catch(e) {}
+    }
     sourcesRef.current.clear();
+    
     setIsActive(false);
     setStatus('idle');
   };
+
+  useEffect(() => {
+    return () => stopSession();
+  }, []);
 
   return (
     <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">
@@ -189,7 +229,13 @@ const AiVoiceAgent: React.FC = () => {
                 <span className="text-[10px] text-green-400 font-bold uppercase tracking-wider">Live Voice Channel</span>
               </div>
             </div>
-            <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-white transition-colors">
+            <button 
+              onClick={() => {
+                if(isActive) stopSession();
+                setIsOpen(false);
+              }} 
+              className="text-slate-400 hover:text-white transition-colors"
+            >
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -202,29 +248,31 @@ const AiVoiceAgent: React.FC = () => {
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-900 text-lg">Need help with rebates or a repair?</h4>
-                  <p className="text-sm text-slate-500 mt-2">Speak with Chloe or Sam instantly via high-speed voice.</p>
+                  <p className="text-sm text-slate-500 mt-2">Chloe (Front Desk) and Sam (Dispatch) are standing by.</p>
                 </div>
                 <button 
                   onClick={startSession}
-                  className="w-full bg-smileRed hover:bg-red-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  disabled={status === 'connecting'}
+                  className="w-full bg-smileRed hover:bg-red-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  Start Live Call
+                  {status === 'connecting' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-5 h-5" />}
+                  {status === 'connecting' ? 'Connecting...' : 'Start Live Call'}
                 </button>
               </>
             ) : (
               <>
                 {/* Active Voice Interface */}
-                <div className="relative flex items-center justify-center py-4 w-full">
-                  <div className="flex gap-1 h-12 items-center">
+                <div className="relative flex items-center justify-center py-6 w-full">
+                  <div className="flex gap-1.5 h-16 items-center">
                     {[...Array(12)].map((_, i) => (
                       <div 
                         key={i} 
-                        className={`w-1 bg-smileRed rounded-full transition-all duration-150 ${
+                        className={`w-1.5 bg-smileRed rounded-full transition-all duration-150 ${
                           status === 'speaking' ? 'animate-pulse' : 
                           status === 'listening' ? 'opacity-40' : 'opacity-10'
                         }`}
                         style={{ 
-                          height: status === 'speaking' ? `${20 + Math.random() * 30}px` : '4px',
+                          height: status === 'speaking' ? `${30 + Math.random() * 40}px` : '6px',
                           animationDelay: `${i * 0.1}s`
                         }}
                       />
@@ -233,15 +281,17 @@ const AiVoiceAgent: React.FC = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-xs font-bold border border-green-100 uppercase tracking-tighter">
+                  <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-tighter transition-colors ${
+                    status === 'speaking' ? 'bg-red-50 text-red-700 border-red-100' : 'bg-green-50 text-green-700 border-green-100'
+                  }`}>
                     <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${status === 'speaking' ? 'bg-red-400' : 'bg-green-400'}`}></span>
+                      <span className={`relative inline-flex rounded-full h-2 w-2 ${status === 'speaking' ? 'bg-red-500' : 'bg-green-500'}`}></span>
                     </span>
-                    Connected to {status === 'speaking' ? 'Sam/Chloe' : 'Listening...'}
+                    {status === 'speaking' ? 'Agent Speaking' : 'Listening...'}
                   </div>
                   <p className="text-sm text-slate-500">
-                    {status === 'speaking' ? 'Smile HVAC is responding...' : 'Say "I have a gas smell" or "Tell me about rebates"'}
+                    {status === 'speaking' ? 'Smile HVAC is responding to your request.' : 'Ask about "rebates" or tell us your emergency.'}
                   </p>
                 </div>
 
@@ -249,7 +299,8 @@ const AiVoiceAgent: React.FC = () => {
                   onClick={stopSession}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-2"
                 >
-                  End Session
+                  <MicOff className="w-5 h-5" />
+                  End Call
                 </button>
               </>
             )}
@@ -257,7 +308,7 @@ const AiVoiceAgent: React.FC = () => {
 
           <div className="bg-slate-50 p-4 border-t border-gray-100 flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-smileRed" />
-            <span className="text-[10px] text-slate-500 font-medium">EMERGENCY: If you smell gas, leave immediately and call 911.</span>
+            <span className="text-[10px] text-slate-500 font-medium">EMERGENCY: Gas smell? Leave house & call 911 immediately.</span>
           </div>
         </div>
       )}
